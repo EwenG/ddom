@@ -1,4 +1,5 @@
-(ns ewen.ddom.core)
+(ns ewen.ddom.core
+  (:require [cljs.compiler :as comp]))
 
 (defmacro defnx [name args & body]
   `(do
@@ -7,7 +8,8 @@
      (cljs.core/specify! ~name
        IXNamed
        (xname [~'_]
-         (str (munge ~(str *ns*)) "." (-> ~name quote munge str)))
+         ~(str (comp/munge (str *ns*)) "."
+               (comp/munge (str name))))
        cljs.core/IPrintWithWriter
        (cljs.core/-pr-writer [~'o ~'writer ~'_]
          (cljs.core/-write
@@ -19,7 +21,8 @@
        (cljs.core/specify! ~name
          IXNamed
          (xname [~'_]
-           (str (munge ~(str *ns*)) "." (-> ~name quote munge str)))
+           ~(str (comp/munge (str *ns*)) "."
+                 (comp/munge (str name))))
          cljs.core/IPrintWithWriter
          (cljs.core/-pr-writer [~'o ~'writer ~'_]
            (cljs.core/-write
