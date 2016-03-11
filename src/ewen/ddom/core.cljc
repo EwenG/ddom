@@ -147,7 +147,7 @@ readable through cljs.reader/read-string"
                                  :or {match-all false}}]
            {:pre [(or (nil? match-ids) (coll? match-ids))]}
            (cond match-all
-                 (let [nodes (.querySelectorAll js/document "[id]")]
+                 (let [nodes (.querySelectorAll new-root "[id]")]
                    (dotimes [i (.-length nodes)]
                      (let [node (aget nodes i)
                            id (.-id node)]
