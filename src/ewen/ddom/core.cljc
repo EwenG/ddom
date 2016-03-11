@@ -2,10 +2,7 @@
   "A library for using the dom declaratively without relying on a virtual
   dom"
   (:require #?@(:cljs
-                [[hiccup.core :refer-macros [html]]
-                 [hiccup.def :refer-macros [defhtml]]
-                 [hiccup.page :refer [include-css]]
-                 [goog.dom :as dom]
+                [[goog.dom :as dom]
                  [cljs.reader :as reader :refer [read-string]]])
             #?(:clj [cljs.compiler :as comp])
             [clojure.string :refer [split join]])
@@ -139,3 +136,36 @@ readable through cljs.reader/read-string"
                  (str "," (join "," (map format-param params)))
                  "")]
     (format "%s.call(null,event%s)" full-name params)))
+
+#?(:cljs (def string->fragment
+           "An alias for goog.dom/htmlToDocumentFragment. Converts a string
+  of HTML into dom node(s)."
+           dom/htmlToDocumentFragment))
+
+#?(:cljs (defn replace-node
+           [new-root old-root & {:keys [match-all match-ids]
+                                 :or {match-all false}}]
+           {:pre [(or (nil? match-ids) (coll? match-ids))]}
+           (cond match-all
+                 (let [nodes (.querySelectorAll js/document "[id]")]
+                   (dotimes [i (.-length nodes)]
+                     (let [node (aget nodes i)
+                           id (.-id node)]
+                       (when-let [old (.querySelector
+                                       old-root (str "#" id))]
+                         (dom/replaceNode old node)))))
+                 match-ids
+                 (doseq [id match-ids]
+                   (when-let [old-node (.querySelector
+                                        old-root (str "#" id))]
+                     (when-let [new-node (.querySelector
+                                          new-root (str "#" id))]
+                       (dom/replaceNode old-node new-node))))
+                 :else nil)
+           (dom/replaceNode new-root old-root)))
+
+(comment
+  (require '[hiccup.core :refer-macros [html]])
+  (require '[hiccup.def :refer-macros [defhtml]])
+  (require '[hiccup.page :refer [include-css]])
+  )
