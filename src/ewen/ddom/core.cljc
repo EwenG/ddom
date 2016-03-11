@@ -1,4 +1,6 @@
 (ns ewen.ddom.core
+  "A library for using the dom declaratively without relying on a virtual
+  dom"
   (:require #?@(:cljs
                 [[hiccup.core :refer-macros [html]]
                  [hiccup.def :refer-macros [defhtml]]
@@ -16,7 +18,10 @@
   (^string xname [x]
    "Returns the munged fully qualified name String of x."))
 
-;; Clojure (jvm) specific type
+;; Clojure (jvm) specific type. This type exists only in order to be able
+;; to extend print-method to implementations of IXNamed in a single place.
+;; Without it, we would have to use reify and print-method would have to be
+;; extended to every type created by reify.
 #?(:clj (deftype XNamed [name]
           IXNamed
           (xname [_]
@@ -75,25 +80,39 @@
           [env]
           (boolean (:ns env))))
 
-#?(:clj (defmacro defnx [name & meta-body]
+#?(:clj (defmacro defnx
+          "Define an exported function. The exported function has its
+  ^:exported metadata set to true which prevents it from being renamed by
+  the closure advanced compilation mode. Its named can be queried using the
+  IXNamed protocol and the function is printed using the
+  #ewen.ddom.core/exported tag reader, which make reading it back possible"
+          [name & meta-body]
           (let [[name body] (name-with-attributes name meta-body)]
             (if (cljs-env? &env)
               `(do (defn ^:export ~name ~@body)
                    ~(specify-exported name))
               `(def ~name ~(->XNamed name))))))
 
-#?(:clj (defmacro defx [name & meta-body]
+#?(:clj (defmacro defx
+          "Like def but set the ^:exported metadata to true, which prevents
+  the thing defined from being renamed by the closure advanced compilation
+  mode. The name of the thing defined can be queried using the IXNamed
+  protocol and it is printed using the #ewen.ddom.core/exported tag reader,
+  which make reading it back possible"
+          [name & meta-body]
           (let [[name body] (name-with-attributes name meta-body)]
             `(do (def ^:export ~name ~@body)
                  ~(specify-exported name)))))
 
 ;; End of macros
 
-;; Same as the standard read-string function, but exported
-(defnx read-string-x [s]
+(defnx read-string-x
+  "The same as the standard read-string function, but defined using defnx"
+  [s]
   (read-string s))
 
-;; Cljs tag reader for exported "vars", defined with defx or defnx
+;; A cljs tag reader for exported definitions, ie: things defined with defx
+;; or defnx
 #?(:cljs
    (reader/register-tag-parser! 'ewen.ddom.core/exported
                                 (fn [x]
@@ -105,14 +124,18 @@
   )
 
 (defn handler [xfn & params]
+  "Converts a function implementing the IXNamed protocol into a string of
+javascript code. The javascript code is a call to this function with params
+ as parameters. The parameters must all be serializable through pr-str and
+readable through cljs.reader/read-string"
   {:pre [(satisfies? IXNamed xfn)]}
- (let [full-name (xname xfn)
-       format-param (fn [param]
-                      (let [param-s (pr-str (pr-str param))]
-                        (format "%s.call(null,%s)"
-                                (xname read-string-x)
-                                param-s)))
-       params (if-not (empty? params)
-                (str "," (join "," (map format-param params)))
-                "")]
-   (format "%s.call(null,event%s)" full-name params)))
+  (let [full-name (xname xfn)
+        format-param (fn [param]
+                       (let [param-s (pr-str (pr-str param))]
+                         (format "%s.call(null,%s)"
+                                 (xname read-string-x)
+                                 param-s)))
+        params (if-not (empty? params)
+                 (str "," (join "," (map format-param params)))
+                 "")]
+    (format "%s.call(null,event%s)" full-name params)))
