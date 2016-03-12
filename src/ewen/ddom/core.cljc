@@ -19,11 +19,11 @@
 ;; to extend print-method to implementations of IXNamed in a single place.
 ;; Without it, we would have to use reify and print-method would have to be
 ;; extended to every type created by reify.
-#?(:clj (deftype XNamed [name]
+#?(:clj (deftype XNamed [ns name]
           IXNamed
           (xname [_]
-            (str (comp/munge (str *ns*)) "."
-                 (comp/munge (str name))))))
+            (str (comp/munge ns) "."
+                 (comp/munge name)))))
 
 ;; Clojure (jvm) specific XNamed printing
 #?(:clj (defmethod print-method XNamed [o ^java.io.Writer w]
@@ -35,7 +35,7 @@
 ;; Taken from tools.macro
 ;; https://github.com/clojure/tools.macro
 #?(:clj (defn name-with-attributes
-  "To be used in macro definitions.
+          "To be used in macro definitions.
    Handles optional docstrings and attribute maps for a name to be defined
    in a list of macro arguments. If the first macro argument is a string,
    it is added as a docstring to name and removed from the macro argument
@@ -44,20 +44,20 @@
    macro argument list. The return value is a vector containing the name
    with its extended metadata map and the list of unprocessed macro
    arguments."
-  [name macro-args]
-  (let [[docstring macro-args] (if (string? (first macro-args))
-                                 [(first macro-args) (next macro-args)]
-                                 [nil macro-args])
-    [attr macro-args]          (if (map? (first macro-args))
-                                 [(first macro-args) (next macro-args)]
-                                 [{} macro-args])
-    attr                       (if docstring
-                                 (assoc attr :doc docstring)
-                                 attr)
-    attr                       (if (meta name)
-                                 (conj (meta name) attr)
-                                 attr)]
-    [(with-meta name attr) macro-args])))
+          [name macro-args]
+          (let [[docstring macro-args] (if (string? (first macro-args))
+                                         [(first macro-args) (next macro-args)]
+                                         [nil macro-args])
+                [attr macro-args]          (if (map? (first macro-args))
+                                             [(first macro-args) (next macro-args)]
+                                             [{} macro-args])
+                attr                       (if docstring
+                                             (assoc attr :doc docstring)
+                                             attr)
+                attr                       (if (meta name)
+                                             (conj (meta name) attr)
+                                             attr)]
+            [(with-meta name attr) macro-args])))
 
 #?(:clj (defn specify-exported [name]
           `(cljs.core/specify! ~name
@@ -88,7 +88,7 @@
             (if (cljs-env? &env)
               `(do (defn ^:export ~name ~@body)
                    ~(specify-exported name))
-              `(def ~name ~(->XNamed name))))))
+              `(def ~name (->XNamed ~(str *ns*) ~(str name)))))))
 
 #?(:clj (defmacro defx
           "Like def but set the ^:exported metadata to true, which prevents
@@ -98,8 +98,10 @@
   which make reading it back possible"
           [name & meta-body]
           (let [[name body] (name-with-attributes name meta-body)]
-            `(do (def ^:export ~name ~@body)
-                 ~(specify-exported name)))))
+            (if (cljs-env? &env)
+              `(do (def ^:export ~name ~@body)
+                   ~(specify-exported name))
+              `(def ~name (->XNamed ~(str *ns*) ~(str name)))))))
 
 ;; End of macros
 
@@ -143,10 +145,10 @@ readable through cljs.reader/read-string"
            dom/htmlToDocumentFragment))
 
 #?(:cljs (defn replace-node
-           [new-root old-root & {:keys [match-all match-ids]
-                                 :or {match-all false}}]
+           [new-root old-root & {:keys [match-all-ids match-ids]
+                                 :or {match-all-ids false}}]
            {:pre [(or (nil? match-ids) (coll? match-ids))]}
-           (cond match-all
+           (cond match-all-ids
                  (let [nodes (.querySelectorAll new-root "[id]")]
                    (dotimes [i (.-length nodes)]
                      (let [node (aget nodes i)
