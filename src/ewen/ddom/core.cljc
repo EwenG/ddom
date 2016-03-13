@@ -9,6 +9,10 @@
   #?(:cljs (:require-macros [ewen.ddom.core :refer [defnx]]))
   #?(:cljs (:import [goog.string format])))
 
+#?(:clj (defn munge-namespaced [ns name]
+          (str (comp/munge ns) "."
+               (comp/munge name))))
+
 ;; Cross platform protocol
 (defprotocol IXNamed
   "Protocol for retrieving name of an exported def"
@@ -21,9 +25,7 @@
 ;; extended to every type created by reify.
 #?(:clj (deftype XNamed [ns name]
           IXNamed
-          (xname [_]
-            (str (comp/munge ns) "."
-                 (comp/munge name)))))
+          (xname [_] (munge-namespaced ns name))))
 
 ;; Clojure (jvm) specific XNamed printing
 #?(:clj (defmethod print-method XNamed [o ^java.io.Writer w]
@@ -86,8 +88,11 @@
           [name & meta-body]
           (let [[name body] (name-with-attributes name meta-body)]
             (if (cljs-env? &env)
-              `(do (defn ^:export ~name ~@body)
-                   ~(specify-exported name))
+              `(do (defn ~name ~@body)
+                   ~(specify-exported name)
+                   ;; Manually export the symbol because specify seems
+                   ;; to break the ^:export metadata
+                   (goog/exportSymbol ~(munge-namespaced *ns* name) ~name))
               `(def ~name (->XNamed ~(str *ns*) ~(str name)))))))
 
 #?(:clj (defmacro defx
@@ -99,8 +104,11 @@
           [name & meta-body]
           (let [[name body] (name-with-attributes name meta-body)]
             (if (cljs-env? &env)
-              `(do (def ^:export ~name ~@body)
-                   ~(specify-exported name))
+              `(do (def ~name ~@body)
+                   ~(specify-exported name)
+                   ;; Manually export the symbol because specify seems
+                   ;; to break the ^:export metadata
+                   (goog/exportSymbol ~(munge-namespaced *ns* name) ~name))
               `(def ~name (->XNamed ~(str *ns*) ~(str name)))))))
 
 ;; End of macros
