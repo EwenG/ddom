@@ -145,27 +145,21 @@ readable through cljs.reader/read-string"
            dom/htmlToDocumentFragment))
 
 #?(:cljs (defn replace-node
-           [new-root old-root & {:keys [match-all-ids match-ids]
-                                 :or {match-all-ids false}}]
-           {:pre [(or (nil? match-ids) (coll? match-ids))]}
-           (cond match-all-ids
-                 (let [nodes (.querySelectorAll new-root "[id]")]
-                   (dotimes [i (.-length nodes)]
-                     (let [node (aget nodes i)
-                           id (.-id node)]
-                       (when-let [old (.querySelector
-                                       old-root (str "#" id))]
-                         (dom/replaceNode old node)))))
-                 match-ids
-                 (doseq [id match-ids]
-                   (when-let [old-node (.querySelector
-                                        old-root (str "#" id))]
-                     (when-let [new-node (.querySelector
-                                          new-root (str "#" id))]
-                       (dom/replaceNode old-node new-node))))
-                 :else nil)
-           (dom/replaceNode new-root old-root)
-           new-root))
+           ([new-root old-root]
+            (replace-node new-root old-root nil))
+           ([new-root old-root match-ids]
+            {:pre [(or (nil? match-ids) (coll? match-ids))]}
+            (when match-ids
+              (doseq [id match-ids]
+                (when-let [old-node (.querySelector
+                                     old-root
+                                     (format "[data-ddom-id=\"%s\"]" id))]
+                  (when-let [new-node (.querySelector
+                                       new-root
+                                       (format "[data-ddom-id=\"%s\"]" id))]
+                    (dom/replaceNode old-node new-node)))))
+            (dom/replaceNode new-root old-root)
+            new-root)))
 
 (comment
   (require '[hiccup.core :refer-macros [html]])
