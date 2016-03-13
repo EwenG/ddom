@@ -164,7 +164,8 @@ readable through cljs.reader/read-string"
                                           new-root (str "#" id))]
                        (dom/replaceNode old-node new-node))))
                  :else nil)
-           (dom/replaceNode new-root old-root)))
+           (dom/replaceNode new-root old-root)
+           new-root))
 
 (comment
   (require '[hiccup.core :refer-macros [html]])
