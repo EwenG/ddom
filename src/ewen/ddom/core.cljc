@@ -16,8 +16,8 @@
 ;; Cross platform protocol
 (defprotocol IXNamed
   "Protocol for retrieving name of an exported def"
-  (^string xname [x]
-   "Returns the munged fully qualified name String of x."))
+  (^string xnamespace [x])
+  (^string xname [x]))
 
 ;; Clojure (jvm) specific type. This type exists only in order to be able
 ;; to extend print-method to implementations of IXNamed in a single place.
@@ -25,12 +25,13 @@
 ;; extended to every type created by reify.
 #?(:clj (deftype XNamed [ns name]
           IXNamed
-          (xname [_] (munge-namespaced ns name))))
+          (xnamespace [_] (munge ns))
+          (xname [_] (munge name))))
 
 ;; Clojure (jvm) specific XNamed printing
 #?(:clj (defmethod print-method XNamed [o ^java.io.Writer w]
           (.write
-           w (str "#ewen.ddom.core/exported " (pr-str (xname o))))))
+           w (format "#ddom/x[%s %s]" (xnamespace o) (xname o)))))
 
 ;; Cross platform macros
 
@@ -47,31 +48,37 @@
    with its extended metadata map and the list of unprocessed macro
    arguments."
           [name macro-args]
-          (let [[docstring macro-args] (if (string? (first macro-args))
-                                         [(first macro-args) (next macro-args)]
-                                         [nil macro-args])
-                [attr macro-args]          (if (map? (first macro-args))
-                                             [(first macro-args) (next macro-args)]
-                                             [{} macro-args])
-                attr                       (if docstring
-                                             (assoc attr :doc docstring)
-                                             attr)
-                attr                       (if (meta name)
-                                             (conj (meta name) attr)
-                                             attr)]
+          (let [[docstring macro-args]
+                (if (string? (first macro-args))
+                  [(first macro-args) (next macro-args)]
+                  [nil macro-args])
+                [attr macro-args]
+                (if (map? (first macro-args))
+                  [(first macro-args) (next macro-args)]
+                  [{} macro-args])
+                attr
+                (if docstring
+                  (assoc attr :doc docstring)
+                  attr)
+                attr
+                (if (meta name)
+                  (conj (meta name) attr)
+                  attr)]
             [(with-meta name attr) macro-args])))
 
 #?(:clj (defn specify-exported [name]
           `(cljs.core/specify! ~name
              IXNamed
+             (xnamespace [~'_]
+               ~(str (comp/munge *ns*)))
              (xname [~'_]
-               ~(str (comp/munge (str *ns*)) "."
-                     (comp/munge (str name))))
+               ~(str (comp/munge name)))
              cljs.core/IPrintWithWriter
-             (cljs.core/-pr-writer [~'o ~'writer ~'_]
+             (cljs.core/-pr-writer [~'_ ~'writer ~'_]
                (cljs.core/-write
                 ~'writer
-                (str "#ewen.ddom.core/exported " (pr-str (xname ~'o))))))))
+                ~(format "#ddom/x[%s %s]"
+                         (comp/munge *ns*) (comp/munge name)))))))
 
 #?(:clj (defn cljs-env?
           "Take the &env from a macro, and tell whether we are expanding
@@ -84,7 +91,7 @@
   ^:exported metadata set to true which prevents it from being renamed by
   the closure advanced compilation mode. Its named can be queried using the
   IXNamed protocol and the function is printed using the
-  #ewen.ddom.core/exported tag reader, which make reading it back possible"
+  #ddom/x tag reader, which make reading it back possible"
           [name & meta-body]
           (let [[name body] (name-with-attributes name meta-body)]
             (if (cljs-env? &env)
@@ -99,7 +106,7 @@
           "Like def but set the ^:exported metadata to true, which prevents
   the thing defined from being renamed by the closure advanced compilation
   mode. The name of the thing defined can be queried using the IXNamed
-  protocol and it is printed using the #ewen.ddom.core/exported tag reader,
+  protocol and it is printed using the #ddom/x tag reader,
   which make reading it back possible"
           [name & meta-body]
           (let [[name body] (name-with-attributes name meta-body)]
@@ -118,39 +125,102 @@
   [s]
   (read-string s))
 
+#?(:cljs
+   (defn parse-fn [ns name]
+     (apply aget js/window (into (split ns ".") (split name ".")))))
+
 ;; A cljs tag reader for exported definitions, ie: things defined with defx
 ;; or defnx
 #?(:cljs
-   (reader/register-tag-parser! 'ewen.ddom.core/exported
-                                (fn [x]
-                                  (apply aget js/window (split x ".")))))
+   (reader/register-tag-parser!
+    'ddom/x
+    (fn [[ns name]] (parse-fn ns name))))
+
+;; A cljs tag reader for event handlers
+#?(:cljs
+   (reader/register-tag-parser!
+    'ddom/h
+    (fn [[event-type ns name & params]]
+      (into [(str event-type) (parse-fn ns name)] params))))
 
 (comment
   #?(:cljs
-     (read-string "#ewen.ddom.core/exported ewen.ddom.core.read_string_x"))
+     (read-string "#ddom/x[ewen.ddom.core read_string_x]")
+
+     )
+
+  #?(:cljs
+     (read-string "#ddom/h[click ewen.ddom.core read_string_x]")
+     )
   )
 
-(defn handler [xfn & params]
-  "Converts a function implementing the IXNamed protocol into a string of
-javascript code. The javascript code is a call to this function with params
- as parameters. The parameters must all be serializable through pr-str and
-readable through cljs.reader/read-string"
+(def handler-key
+  "The HTML parameter used by ddom to register event handlers"
+  :data-ddom-event)
+
+(defn handler [event-type xfn & params]
+  "Takes an event type, a function implementing the IXNamed protocol and
+returns a string containing the type of the event, the name of the
+javascript function to be used to handle the event and optionally additional
+parameters for the event hanlder. The parameters must all be serializable
+through pr-str and readable through cljs.reader/read-string. The string is
+formatted in a way suitable to be embedded in a \"data-ddom-event\" HTML
+attribute for further processing by the ddom library."
   {:pre [(satisfies? IXNamed xfn)]}
-  (let [full-name (xname xfn)
-        format-param (fn [param]
-                       (let [param-s (pr-str (pr-str param))]
-                         (format "%s.call(null,%s)"
-                                 (xname read-string-x)
-                                 param-s)))
-        params (if-not (empty? params)
-                 (str "," (join "," (map format-param params)))
+  (let [params (if-not (empty? params)
+                 (str " " (join " " (map (comp pr-str pr-str) params)))
                  "")]
-    (format "%s.call(null,event%s)" full-name params)))
+    (format "#ddom/h[%s %s %s%s]"
+            (name event-type) (xnamespace xfn) (xname xfn) params)))
 
 #?(:cljs (def string->fragment
            "An alias for goog.dom/htmlToDocumentFragment. Converts a string
   of HTML into dom node(s)."
            dom/htmlToDocumentFragment))
+
+(comment
+  #?(:cljs (defn parse-params [rdr]
+              (loop [rdr rdr
+                     params (transient [])]
+                (if-let [o (cljs.reader/read rdr false nil false)]
+                  (recur rdr (conj! params o))
+                  (persistent! params)))))
+
+  #?(:cljs (defn parse-event-attr [event-attr]
+              (loop [rdr (cljs.reader/push-back-reader event-attr)
+                     event-type (cljs.reader/read rdr false nil false)
+                     handler-fn (cljs.reader/read rdr false nil false)
+                     params (parse-params rdr)]
+                #js {:event-type event-type
+                     :handler-fn handler-fn :params params}))))
+
+#?(:cljs (defn parse-handlers [event-attr]
+           (loop [rdr (cljs.reader/push-back-reader event-attr)
+                  handlers (transient [])]
+             (if-let [handler (cljs.reader/read rdr false nil false)]
+               (recur rdr (conj! handlers handler))
+               (persistent! handlers)))))
+
+#?(:cljs
+   (defn register-handlers [root]
+     (let [nodes (.querySelectorAll root "[data-ddom-event]")
+           root-attr (.getAttribute root "data-ddom-event")]
+       (when (and root-attr (not= root-attr ""))
+         (let [handlers (parse-handlers root-attr)]
+           (doseq [[event-type handler-fn & params] handlers]
+             (.addEventListener root
+                                event-type
+                                (fn [e] (apply handler-fn e params))
+                                false))))
+       (doseq [i (range (.-length nodes))]
+         (let [node (aget nodes i)
+               event-attr (.getAttribute node "data-ddom-event")
+               handlers (parse-handlers event-attr)]
+           (doseq [[event-type handler-fn & params] handlers]
+             (.addEventListener node
+                                event-type
+                                (fn [e] (apply handler-fn e params))
+                                false)))))))
 
 #?(:cljs (defn replace-node
            ([new-root old-root]
